@@ -15,7 +15,7 @@ dyld是苹果出品的动态链接器，是MacOS和iOS平台计算机体系的�
 
 dyld作为动态链接器在发挥作用前要进行自举，这段过程就是在kern留下的栈环境下，进行地址重定位，最后将接力棒交给dyld的主函数`dyld::_main`，伪代码如下：
 
-```text
+```cpp
 //  This is code to bootstrap dyld.  This work in normally done for a program by dyld and crt.
 //  In dyld we have to do this manually.
 //
@@ -48,7 +48,7 @@ uintptr_t start(const struct macho_header* appsMachHeader, int argc, const char*
 
 `rebaseDyld`会对所有地址有引用的地方进行基址重置。将重定位\(relocation\)表项和`__LINKEDIT`中的non lazy indirect symbol pointers相对地址调整为绝对地址，添加slide。伪代码如下：
 
-```text
+```cpp
 //
 // If the kernel does not load dyld at its preferred address, we need to apply 
 // fixups to various initialized parts of the __DATA segment
@@ -122,7 +122,7 @@ static void rebaseDyld(const struct macho_header* mh, intptr_t slide)
 
 伪代码如下：
 
-```text
+```cpp
 //
 // Entry point for dyld.  The kernel loads dyld and jumps to __dyld_start which
 // sets up some registers and call this function.
@@ -207,7 +207,7 @@ _main(const macho_header* mainExecutableMH, uintptr_t mainExecutableSlide,
 
 经过`initializeMainExecutable`这一步骤，核心系统库\(lib...\)、objc自举，自举后才生效。先进行初始化\(static initializers\)，后进行终止化\(static terminator\)。先初始化插入的动态库，再初始化主程序，最后以同样顺序终止化。伪代码如下：
 
-```text
+```cpp
 void initializeMainExecutable()
 {
     // run initialzers for any inserted dylibs
@@ -229,7 +229,7 @@ void initializeMainExecutable()
 
 `recursiveInitialization`以拓扑排序的引用深度递归初始化依赖库，先初始化依赖库，后初始化被依赖库，并在过程中为终止化记录顺序。`runAllStaticTerminators`则以记录的顺序终止化。伪代码如下：
 
-```text
+```cpp
 void ImageLoader::recursiveInitialization(const LinkContext& context, mach_port_t this_thread)
 {
     try {
@@ -272,7 +272,7 @@ static void runAllStaticTerminators(void* extra)
 
 初始化最终收敛到`doInitialization`，`doInitialization`会运行库的Routine\(`doImageInit`\)和ModInitFunction\(`doModInitFunctions`\)。终止化最终收敛到`doTermination`，`doTermination`会运行库的ModTermFunction。这几个过程都是从segment中找出初始化函数的地址并调用，伪代码如下：
 
-```text
+```cpp
 void ImageLoaderMachO::doImageInit(const LinkContext& context)
 {
     const uint32_t cmd_count = ((macho_header*)fMachOData)->ncmds;
@@ -346,7 +346,7 @@ void ImageLoaderMachO::doTermination(const LinkContext& context)
 
 核心系统库就是用这种方式注入自举，代码在[libSystem](https://opensource.apple.com/source/Libsystem/)中，伪代码如下：
 
-```text
+```cpp
 // system library initialisers
 extern void bootstrap_init(void);   // from liblaunch.dylib
 extern void mach_init(void);      // from libsystem_mach.dylib
@@ -386,7 +386,7 @@ void libSystem_initializer(int argc, const char* argv[], const char* envp[], con
 
 其中初始化的库包括：`libdispatch`、`libxpc`、`libsystem_mach`、`liblaunch`、`libc`、`libkeymgr`等。objc的自举在`libdispatch_init`中，代码在[libdispatch](https://opensource.apple.com/tarballs/libdispatch/)中，伪代码如下：
 
-```text
+```cpp
 libdispatch_init(void)
 {
 #if DISPATCH_USE_THREAD_LOCAL_STORAGE
@@ -425,7 +425,7 @@ libdispatch_init(void)
 
 在茫茫初始化中，`_os_object_init`进行了objc的自举，`_os_object_init`主过程是在[objc4](https://opensource.apple.com/tarballs/objc4/)代码中的`_objc_init`，伪代码如下：
 
-```text
+```cpp
 /**********************************************************************
 * _objc_init
 * Bootstrap initialization. Registers our image notifier with dyld.
@@ -458,7 +458,7 @@ void _objc_init(void)
 
 在此过程中，要对future class和non-lazy class进行realize，伪代码如下：
 
-```text
+```cpp
 /********************************************************************
 * _read_images
 * Perform initial processing of the headers in the linked 
@@ -597,7 +597,7 @@ void _read_images(header_info hList, uint32_t hCount, int totalClasses, int unop
 
 `readClass`、`readProtocol`这几个过程是向`gdb_objc_realized_classes`、`protocol_map`注册结构，伪代码如下：
 
-```text
+```cpp
 /***********************************************************************
 * readClass
 * Read a class and metaclass as written by a compiler.
@@ -672,7 +672,7 @@ readProtocol(protocol_t *newproto, Class protocol_class,
 
 `realizeClass`伪代码如下：
 
-```text
+```cpp
 /***********************************************************************
 * realizeClass
 * Performs first-time initialization on class cls, 
@@ -750,7 +750,7 @@ static Class realizeClass(Class cls)
 
 第四步在设置了super class后，如果super class空间与原class空间重叠，需要对原class的实例重新计算其位置并调整，伪代码如下：
 
-```text
+```cpp
 static void reconcileInstanceVariables(Class cls, Class supercls, const class_ro_t*& ro) 
 {
     class_rw_t *rw = cls->data();
@@ -817,7 +817,7 @@ static void moveIvars(class_ro_t *ro, uint32_t superSize)
 
 最后一步的处理都在`methodizeClass`中，先将`class_ro_t`结构中的method、property、protocol安装到`class_rw_t`，后依附category，而`_read_images`中的`remethodizeClass`也是用同样的方式依附category，`methodizeClass`伪代码如下：
 
-```text
+```cpp
 /***********************************************************************
 * methodizeClass
 * Fixes up cls's method list, protocol list, and property list.
@@ -855,7 +855,7 @@ static void methodizeClass(Class cls)
 
 依附category就是将category的method、property、protocol append到原class中，伪代码如下：
 
-```text
+```cpp
 // Attach method lists and properties and protocols from categories to a class.
 // Assumes the categories in cats are all loaded and sorted by load order, 
 // oldest categories first.
@@ -916,7 +916,7 @@ attachCategories(Class cls, category_list *cats, bool flush_caches)
 
 `load_images`核心过程就是以super class &gt; class &gt; category的顺序调用class的load方法，先调整顺序再调用，伪代码如下：
 
-```text
+```cpp
 void
 load_images(const char *path __unused, const struct mach_header *mh)
 {
@@ -933,7 +933,7 @@ load_images(const char *path __unused, const struct mach_header *mh)
 
 `prepare_load_methods`过程以及其`schedule_class_load`子过程中，调整调用顺序，先加入super class，再加入原class，再加入category，伪代码如下：
 
-```text
+```cpp
 void prepare_load_methods(const headerType *mhdr)
 {
     size_t count, i;
@@ -975,7 +975,7 @@ static void schedule_class_load(Class cls)
 
 `call_load_methods`核心过程则是while循环调用load方法，伪代码如下：
 
-```text
+```cpp
 /***********************************************************************
 * call_load_methods
 * Call all pending class and category +load methods.
