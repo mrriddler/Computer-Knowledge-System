@@ -18,3 +18,7 @@
 * [\_dyld\_link&load](lian-jie-yu-zhuang-zai/_dyld_link-and-load.md)
 * [dyld\_startup](lian-jie-yu-zhuang-zai/dyld_startup.md)
 
+## 操作系统 <a id="cao-zuo-xi-tong-cun-chu-ti-xi"></a>
+
+* [虚拟存储器](cao-zuo-xi-tong-cun-chu-ti-xi/xu-ni-cun-chu-qi.md)
+
