@@ -153,7 +153,7 @@ uintptr_t ImageLoaderMachOClassic::exportedSymbolAddress(const LinkContext& cont
 
 伪代码中省略了对弱符号的处理，总之，对于弱符号无法resolve也可接受。
 
-!\[symbol\_relocaiton\]\([https://raw.githubusercontent.com/mrriddler/Computer-Knowledge-System/master/image/link\_load/symbol\_stub.png](https://raw.githubusercontent.com/mrriddler/Computer-Knowledge-System/master/image/link_load/symbol_stub.png)\)
+!\[symbol\_relocaiton\]\([https://yangjh.oschina.io/gitbook/images/gitbook.png](https://yangjh.oschina.io/gitbook/images/gitbook.png)\)
 
 ### bind non lazy indirection symbol pointers
 
