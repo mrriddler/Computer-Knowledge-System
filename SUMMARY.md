@@ -26,3 +26,7 @@
 
 * [栈与堆](zhan-yu-dui/zhan-yu-dui.md)
 
+## 垃圾收集器
+
+* [垃圾收集器](la-ji-shou-ji-qi/la-ji-shou-ji-qi.md)
+
