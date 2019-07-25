@@ -8,6 +8,12 @@
 
 ## 链接与装载
 
+* [链接与装载](lian-jie-yu-zhuang-zai/lian-jie-yu-zhuang-zai.md)
 * [\_dyld\_link&load](lian-jie-yu-zhuang-zai/_dyld_link-and-load.md)
 * [dyld\_startup](lian-jie-yu-zhuang-zai/dyld_startup.md)
+
+## 编程方法论
+
+* [编程漫游](bian-cheng-fang-fa-lun/bian-cheng-man-you.md)
+* [编程求道](bian-cheng-fang-fa-lun/bian-cheng-qiu-dao.md)
 
