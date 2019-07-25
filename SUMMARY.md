@@ -30,3 +30,8 @@
 
 * [垃圾收集器](la-ji-shou-ji-qi/la-ji-shou-ji-qi.md)
 
+## 并发与并行
+
+* [并发与并行](bing-fa-yu-bing-hang/bing-fa-yu-bing-hang.md)
+* [线程安全与锁机制](bing-fa-yu-bing-hang/xian-cheng-an-quan-yu-suo-ji-zhi.md)
+
