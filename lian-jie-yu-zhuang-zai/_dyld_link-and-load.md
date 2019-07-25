@@ -153,7 +153,7 @@ uintptr_t ImageLoaderMachOClassic::exportedSymbolAddress(const LinkContext& cont
 
 伪代码中省略了对弱符号的处理，总之，对于弱符号无法resolve也可接受。
 
-!\[symbol\_relocaiton\]\(/image/link\_load/symbol\_relocaiton.png\)
+!\[symbol\_relocaiton\]\(\image\link\_load\symbol\_relocaiton.png\)
 
 ### bind non lazy indirection symbol pointers
 
@@ -190,7 +190,7 @@ stub机制需要经过两次跳转，相当于进行了一次间接\(indirection
 * 间接跳转的本质是添加了次`jmp`，只能放在`__TEXT`中，这归结于其获得的结果可能是一段可执行代码。
 * 目的地址要放在`__DATA`中，以在运行时将绑定过程地址更改为最终地址。
 
-!\[symbol\_stub\]\(/image/link\_load/symbol\_stub.png\)
+!\[symbol\_stub\]\(\image\link\_load\symbol\_stub.png\)
 
 ## weak bind
 
