@@ -35,3 +35,7 @@
 * [并发与并行](bing-fa-yu-bing-hang/bing-fa-yu-bing-hang.md)
 * [线程安全与锁机制](bing-fa-yu-bing-hang/xian-cheng-an-quan-yu-suo-ji-zhi.md)
 
+## 算法
+
+* [算法升腾](suan-fa/suan-fa-sheng-teng.md)
+
