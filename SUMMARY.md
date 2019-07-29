@@ -39,4 +39,5 @@
 
 * [算法炽热](suan-fa/suan-fa-chi-re.md)
 * [算法升腾](suan-fa/suan-fa-sheng-teng.md)
+* [算法余晖](suan-fa/suan-fa-yu-hui.md)
 
