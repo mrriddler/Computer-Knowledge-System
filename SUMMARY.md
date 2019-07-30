@@ -48,4 +48,5 @@
 
 * [多媒体基础](duo-mei-ti/duo-mei-ti-ji-chu.md)
 * [图片](duo-mei-ti/tu-pian.md)
+* [视频](duo-mei-ti/shi-pin.md)
 
