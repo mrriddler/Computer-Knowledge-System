@@ -44,3 +44,8 @@
 * [算法余晖](suan-fa/suan-fa-yu-hui.md)
 * [算法灰烬](suan-fa/suan-fa-hui-jin.md)
 
+## 多媒体
+
+* [多媒体基础](duo-mei-ti/duo-mei-ti-ji-chu.md)
+* [图片](duo-mei-ti/tu-pian.md)
+
