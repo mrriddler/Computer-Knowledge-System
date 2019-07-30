@@ -49,7 +49,7 @@ dartvm front end：dartvm加载kernel binary，读取二进制文件结构并载
 
 dart程序：
 
-```text
+```dart
 abstract class HelloWorldInterface {
 ​
   String welcome();
@@ -100,7 +100,7 @@ void main() {
 
 对应的kernel：
 
-```text
+```dart
 main = int::main;
 library from "file:///Users/mayufeng/Desktop/hello.dart" as int {
 ​
@@ -165,7 +165,7 @@ library from "file:///Users/mayufeng/Desktop/hello.dart" as int {
 
 编译前端流水线在[kernel\_front\_end](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/vm/lib/kernel_front_end.dart)中，流水线透过[kernel\_generator\_impl](https://github.com/dart-lang/sdk/blob/master/pkg/front_end/lib/src/kernel_generator_impl.dart)的`generateKernelInternal`调用[kernel\_target](https://github.com/dart-lang/sdk/blob/master/pkg/front_end/lib/src/fasta/kernel/kernel_target.dart)的`buildComponent`构建kernel程序构件`Component`，然后由transformer们去分析代码，再由[BinaryPrinter](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/kernel/lib/binary/ast_to_binary.dart)去序列化成kernel binary，最后写入目标文件：
 
-```text
+```dart
 // Run kernel compiler tool with given [options] and [usage]
 /// and return exit code.
 Future<int> runCompiler(ArgResults options, String usage) async {
@@ -270,7 +270,7 @@ Future _runGlobalTransformations(
 
 在多种代码分析中，TFA是比较关键的一种，只在AOT编译下有。TFA基于全局信息进行代码中的类型流动分析，通过类型判断出哪些类、哪些方法是不可达的，并且去虚拟化方法调用。在[transformer.dart](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/vm/lib/transformations/type_flow/transformer.dart)中：
 
-```text
+```dart
 /// Whole-program type flow analysis and transformation.
 /// Assumes strong mode and closed world.
 Component transformComponent(
@@ -303,7 +303,7 @@ Component transformComponent(
 
 dartvm front end在编译前端中的角色就是加载kernel binary，读取二进制文件结构并载入对象模型。`Program`是kernel binary二进制文件结构的抽象，二进制文件头部的读取过程，即`Program`的创建过程：
 
-```text
+```cpp
 std::unique_ptr<Program> Program::ReadFrom(Reader* reader, const char** error) {
   if (reader->size() < 60) {
     // A kernel file currently contains at least the following:
@@ -391,7 +391,7 @@ std::unique_ptr<Program> Program::ReadFrom(Reader* reader, const char** error) {
 
 加载`Program`主要过程如下，加载`Program`相关的`Library`，并返回`Program`的main Library：
 
-```text
+```cpp
 RawObject* KernelLoader::LoadProgram(bool process_pending_classes) {
     bool libraries_loaded = false;
     if (FLAG_enable_interpreter || FLAG_use_bytecode_compiler) {
@@ -427,7 +427,7 @@ RawObject* KernelLoader::LoadProgram(bool process_pending_classes) {
 
 加载`Library`主要过程如下，构建`Library`并加载相关的`Class`：
 
-```text
+```cpp
 RawLibrary* KernelLoader::LoadLibrary(intptr_t index) {
   ...
   const GrowableObjectArray& classes =
@@ -451,7 +451,7 @@ RawLibrary* KernelLoader::LoadLibrary(intptr_t index) {
 
 加载`Class`主要过程如下，构建`Class`并加载相关的`Field` 、`Constructor`、`Function` ：
 
-```text
+```cpp
 void KernelLoader::LoadClass(const Library& library,
                              const Class& toplevel_class,
                              intptr_t class_end,
@@ -592,7 +592,7 @@ CFG、Block、IL是编译后端处理过程中的关键数据结构，整体结�
 
 IL就是架构无关的指令，不同架构有不同实现，不同指令有不同抽象，基本抽象就是`Instruction`类：
 
-```text
+```cpp
 class Instruction : public ZoneAllocated {
  public:
   ...
@@ -632,7 +632,7 @@ class Instruction : public ZoneAllocated {
 
 Block没有整体的抽象，直接由`BlockEntryInstr`作为Block入口表示，构建Block的算法在`DiscoverBlock`中：
 
-```text
+```cpp
 / Basic block entries are administrative nodes.  There is a distinguished
 // graph entry with no predecessor.  Joins are the only nodes with multiple
 // predecessors.  Targets are all other basic block entries.  The types
@@ -666,7 +666,7 @@ class BlockEntryInstr : public Instruction {
 
 CFG是函数体的有向图，后续的分析、优化过程都会直接操作CFG，抽象为`FlowGraph`：
 
-```text
+```cpp
 // Class to encapsulate the construction and manipulation of the flow graph.
 class FlowGraph : public ZoneAllocated {
  public:
@@ -721,7 +721,7 @@ class FlowGraph : public ZoneAllocated {
 
 编译器后端流水线在`ParsedFunctionHelper`的`Compile`中，先由`FlowGraphBuilder`构造出CFG，然后由`BlockScheduler`给CFG加权，再由`CompilerPass::RunPipeline`进行优化流水线，最后交给`Assembler`和`FlowGraphCompiler`降级到机器码：
 
-```text
+```cpp
 RawCode* CompileParsedFunctionHelper::Compile(CompilationPipeline* pipeline) {
   ...
   CompilerState compiler_state(thread());
@@ -774,7 +774,7 @@ RawCode* CompileParsedFunctionHelper::Compile(CompilationPipeline* pipeline) {
 
 编译后端流水线中，由`FlowGraphBuilder`构建`FlowGraph`，会走到`StreamingFlowGraphBuilder`的`BuildGraph`：
 
-```text
+```cpp
 FlowGraph* StreamingFlowGraphBuilder::BuildGraph() {
   const Function& function = parsed_function()->function();
 	...
@@ -823,7 +823,7 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraph() {
 
 `StreamingFlowGraphBuilder`继承自编译前端的`KernelReaderHelper`，在`ParseKernelASTFunction`过程中复用kernel解析过程：
 
-```text
+```cpp
 void StreamingFlowGraphBuilder::ParseKernelASTFunction() {
   const Function& function = parsed_function()->function();
 	...
@@ -879,7 +879,7 @@ void StreamingFlowGraphBuilder::ParseKernelASTFunction() {
 
 `BuildGraphOfFunction`会走到`BuildFunctionBody`再到`NativeFunctionBody`：
 
-```text
+```cpp
 Fragment FlowGraphBuilder::NativeFunctionBody(const Function& function,
                                               LocalVariable* first_parameter) {
   Fragment body;
@@ -918,7 +918,7 @@ Fragment StreamingFlowGraphBuilder::PushArgument() {
 
 指令基于栈的模型在`BaseFlowGraphBuilder`中，由`FlowGraphBuilder`所继承：
 
-```text
+```cpp
 class BaseFlowGraphBuilder {
 public:
   ...
@@ -970,7 +970,7 @@ Fragment BaseFlowGraphBuilder::PushArgument() {
 
 优化流水线中包括多项优化，在编译后端流水线中由`CompilerPass`作为入口：
 
-```text
+```cpp
 void CompilerPass::RunPipeline(PipelineMode mode,
                                CompilerPassState* pass_state) {
   INVOKE_PASS(ComputeSSA);
@@ -1040,7 +1040,7 @@ void CompilerPass::RunPipeline(PipelineMode mode,
 
 优化代码分散在具体的负责方，比如SSA：
 
-```text
+```cpp
 COMPILER_PASS(ComputeSSA, {
   // Transform to SSA (virtual register 0 and no inlining arguments).
   flow_graph->ComputeSSA(0, NULL);
@@ -1053,7 +1053,7 @@ COMPILER_PASS(ComputeSSA, {
 
 x86架构的`Assembler`：
 
-```text
+```cpp
 class Assembler : public AssemblerBase {
  public:
   ...
@@ -1104,7 +1104,7 @@ void Assembler::EmitOperand(int rm, const Operand& operand) {
 
 不同种的虚拟指令都会通过`EmitNativeCode`交给`Assembler`翻译：
 
-```text
+```cpp
 void PushArgumentInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   // In SSA mode, we need an explicit push. Nothing to do in non-SSA mode
   // where PushArgument is handled by BindInstr::EmitNativeCode.
@@ -1148,7 +1148,7 @@ void ClosureCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
 
 `FlowGraphCompiler`会以Block为单位访问程序，翻译机器码：
 
-```text
+```cpp
 // Input parameters:
 //   LR: return address.
 //   SP: address of last argument.
@@ -1200,7 +1200,7 @@ snapshot顾名思义，是isolate堆上内存存储的对象图的快照，可�
 
 而后来随着dart的发展，dart加入了JIT和AOT，snapshot也被改造到有更多的能力。在还没有AOT时期，snapshot是不带机器码的，后来为了支持AOT，snapshot可直接包含机器码。发展到现在，在应用场景，dart衍生出了更多种snapshot，snapshot种类为：
 
-```text
+```cpp
 enum SnapshotKind {
   kCore,
   kCoreJIT,
@@ -1225,7 +1225,7 @@ snapshot的主体是isolate的对象存储，对象存储会被序列化到RO可
 
 isolate的`object_store`会被`FullSnapshotWriter`导出并交给`Serializer`序列化，最终由`ImageWriter`写入RO段，主要过程如下：
 
-```text
+```cpp
 void FullSnapshotWriter::WriteIsolateSnapshot(intptr_t num_base_objects) {
   Serializer serializer(thread(), kind_, isolate_snapshot_data_buffer_, alloc_,
                         kInitialSize, isolate_image_writer_, /*vm=*/false,
@@ -1275,7 +1275,7 @@ void ImageWriter::WriteROData(WriteStream* stream) {
 
 Blob格式会由`BlobImageWriter`导出Text段的指令，主要过程如下：
 
-```text
+```cpp
 void BlobImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
 	...
   // This header provides the gap to make the instructions snapshot look like a
@@ -1314,7 +1314,7 @@ void BlobImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
 
 Assembly格式会由`AssemblyImageWriter`导出Text段的汇编，主要过程如下：
 
-```text
+```cpp
 void AssemblyImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
   const char* instructions_symbol =
       vm ? "_kDartVmSnapshotInstructions" : "_kDartIsolateSnapshotInstructions";
@@ -1426,7 +1426,7 @@ dart支持JIT和AOT，本质上是对应解释型和编译型，也就是说dart
 
 JIT编译主要流程：由编译器前端输出kernel binary，dartvm加载kernel binary，处理好后导出snapshot，运行时通过Stub交给编译后端处理。加载kernel binary和导出snapshot，主要过程在[gen\_snapshot](https://github.com/dart-lang/sdk/blob/master/runtime/bin/gen_snapshot.cc)中，gen\_snapshot会通`Dart_CreateIsolateFromKernel`或`Dart_CreateIsolate`dartvm api去初始化isolate，在isolate初始化时，会初始化Object\(`Object::Init`\)，这时会加载kernel binary。随后针对不同格式的snapshot调用不同的dartvm api，过程如下：
 
-```text
+```cpp
 static int CreateIsolateAndSnapshot(const CommandLineOptions& inputs) {
   uint8_t* kernel_buffer = NULL;
   intptr_t kernel_buffer_size = NULL;
@@ -1558,7 +1558,7 @@ fi
 
 编译器后端的处理和snapshot的导出同样在[gen\_snapshot](https://github.com/dart-lang/sdk/blob/master/runtime/bin/gen_snapshot.cc)中，gen\_snapshot会通过`Dart_Precompile`dartvm api，调用`Precompiler`去`CompileAll`进行后端处理。随后针对不同格式的snapshot调用不同的dartvm api，过程如下：
 
-```text
+```cpp
 static void CreateAndWritePrecompiledSnapshot() {
   Dart_Handle result;
 
