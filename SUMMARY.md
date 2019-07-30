@@ -2,6 +2,14 @@
 
 * [知识体系书托](README.md)
 
+## 语言
+
+* [golang特性](yu-yan/golang-te-xing.md)
+* [JavaScript特性](yu-yan/javascript-te-xing.md)
+* [Swift特性](yu-yan/swift-te-xing.md)
+* [dart特性](yu-yan/dart-te-xing.md)
+* [泛型](yu-yan/fan-xing.md)
+
 ## 架构设计
 
 * [架构设计](jia-gou-she-ji/jia-gou-she-ji.md)
@@ -28,6 +36,15 @@
 * [TCP/IP协议族基础](wang-luo/tcpip-xie-yi-zu-ji-chu.md)
 * [应用层长链接协议设计](wang-luo/ying-yong-ceng-chang-lian-jie-xie-yi-she-ji.md)
 
+## 算法与数据结构 <a id="suan-fa"></a>
+
+* [数据结构](suan-fa/shu-ju-jie-gou.md)
+* [算法火花](suan-fa/suan-fa-huo-hua.md)
+* [算法炽热](suan-fa/suan-fa-chi-re.md)
+* [算法升腾](suan-fa/suan-fa-sheng-teng.md)
+* [算法余晖](suan-fa/suan-fa-yu-hui.md)
+* [算法灰烬](suan-fa/suan-fa-hui-jin.md)
+
 ## 操作系统 <a id="cao-zuo-xi-tong-cun-chu-ti-xi"></a>
 
 * [虚拟存储器](cao-zuo-xi-tong-cun-chu-ti-xi/xu-ni-cun-chu-qi.md)
@@ -44,15 +61,6 @@
 
 * [并发与并行](bing-fa-yu-bing-hang/bing-fa-yu-bing-hang.md)
 * [线程安全与锁机制](bing-fa-yu-bing-hang/xian-cheng-an-quan-yu-suo-ji-zhi.md)
-
-## 算法与数据结构 <a id="suan-fa"></a>
-
-* [数据结构](suan-fa/shu-ju-jie-gou.md)
-* [算法火花](suan-fa/suan-fa-huo-hua.md)
-* [算法炽热](suan-fa/suan-fa-chi-re.md)
-* [算法升腾](suan-fa/suan-fa-sheng-teng.md)
-* [算法余晖](suan-fa/suan-fa-yu-hui.md)
-* [算法灰烬](suan-fa/suan-fa-hui-jin.md)
 
 ## 多媒体
 
