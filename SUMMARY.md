@@ -22,7 +22,7 @@
 
 ## 编译原理 <a id="compile"></a>
 
-* [dart JIT和dart AOT的台前幕后](compile/dart-jit-he-dart-aot-de-tai-qian-mu-hou.md)
+* [dart编译的台前幕后](compile/dart-jit-he-dart-aot-de-tai-qian-mu-hou.md)
 * [语言应用](compile/yu-yan-ying-yong.md)
 
 ## 链接与装载

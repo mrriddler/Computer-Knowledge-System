@@ -1,12 +1,8 @@
----
-description: 本文深入到dartvm源码中，探索JIT和AOT背后的原理。
----
+# dart编译的台前幕后
 
-# dart JIT和dart AOT的台前幕后
+dart是一门既支持JIT也支持AOT还支持Interpret的语言，这就意味着dart集**JIT、编译型、解释型**为一体，能够实现集三种编译类型为一体，dart在编译这方面很值得研究。JIT、AOT、Interpret的背后都是dartVM，本文深入到dartVM源码中，探索JIT、AOT、Interpret背后的原理。
 
-dart是一门既支持JIT也支持AOT的语言，而JIT和AOT的背后都是dartvm，本文深入到dartvm源码中，探索JIT和AOT背后的原理。
-
-dartvm取名叫做虚拟机，这是历史原因造成的。dartvm不仅是个虚拟机，dartvm实际上是**dart语言的实现**：
+dartVM取名叫做虚拟机，这是历史原因造成的。dartVM不仅是个虚拟机，dartVM实际上是**dart语言的实现**：
 
 * runtime
   * 对象模型\(Object Model\)
@@ -20,32 +16,88 @@ dartvm取名叫做虚拟机，这是历史原因造成的。dartvm不仅是个�
 * JIT、AOT编译流水线
   * 编译前端
   * 编译后端
-* 解释器
+* 解释器\(Interpreter\)
 * ARM模拟器
 
-当dart使用JIT时，dartvm会保持完整提供动态加载代码的能力。当dart使用AOT时，dartvm会提供一个删减版，叫做_precompiled runtime_，不包含任何动态加载代码的能力。JIT的编译器叫做_Compiler_，AOT的编译器叫做_Precompiler_。
+当dart使用JIT时，dartVM会保持完整提供动态加载代码的能力。当dart使用AOT时，dartVM会提供一个删减版，叫做_precompiled runtime_，不包含任何动态加载代码的能力。JIT的编译器叫做_Compiler_，AOT的编译器叫做_Precompiler_。Interpret是dartVM比较独立的一块，单独由_Interpreter_负责解释。
 
-JIT和AOT较为复杂，下文从JIT和AOT依赖的编译器前端和编译器后端出发，途经Snapshot，最终回到JIT和AOT。
+JIT、AOT、Interpret较为复杂，下文从JIT、AOT、Interpret依赖的编译器前端和编译器后端出发，途经Snapshot，最终回到JIT、AOT、Interpret。
 
 > 源码地址：[https://github.com/dart-lang/sdk/tree/master/runtime/vm](https://github.com/dart-lang/sdk/tree/master/runtime/vm)
 >
 > 源码版本：2.5.0-dev.10
 
-## 编译器前端
+## 虚拟机的选择
 
-编译器前端流水线如下：
+技术是关乎trade-off的，做虚拟机也一样，需要做选择：
+
+* bytecode vm还是language vm：是基于bytecode的虚拟机，还是针对某个特定语言的虚拟机。
+* base on stack还是base on register：虚拟机指令集是基于栈还是寄存器。
+
+### bytecode vm VS language vm
+
+bytecode vm的优缺点：
+
+* bytecode作为中间语言抽象，可以面向多种编译前端，也就支持多种语言。
+* bytecode如果要支持新的特性，面向多种语言，vm的复杂度会比较高。
+
+language vm的优缺点：
+
+* 针对特定语言设计，无法支持其他语言。
+* 针对一种语言设计，vm可以做到更好的性能。
+* 针对某种语言设计，vm实现可假设语言特性，简单一点。
+
+这其实就是通用和特化的选择，dart在立项时，选择了language vm，但随着dart应用场景的丰富，也提供了基于language vm的bytecode模式，bytecode模式的实现是在基于language vm的前端流水线和后端流水线中，添加了个相关阶段。
+
+### base on register VS base on stack
+
+指令是由操作和目标地址组成，地址可以有n个，形如：
 
 ```text
-dart source -> kernel -> kernel binary -> object model
+op address_1 .... address_n
 ```
 
-common front end：将dart源码通过编译器前端编译成kernel，针对kernel进行多种代码分析，再将kernel序列化出kernel binary。kernel是编译器前端的中间语言抽象，隐藏具体编译输入的细节，也可以看做是编译器前端的输出，编译器后端的输入。
+基于寄存器的指令就是目标地址都是寄存器，比如：
 
-dartvm front end：dartvm加载kernel binary，读取二进制文件结构并载入对象模型。dartvm中有两层对象模型，外层就叫Library、Class，内层以Raw为命名规范，叫做RawLibrary、RawClass，非Raw层会引用Raw层，Raw层是dartvm内部分配使用的。
+```text
+mov  eax, 1  
+add  eax, 2 
+```
 
-### kernel、kernel binary
+基于寄存器的指令集比较常见，比如三地址指令、二地址指令。
 
-实际上，kernel会将dart程序构件\(component\)以自顶向下的方式组织，并添加必要的注解，kernel其实就是dart的AST，kernel本身是由[dart写的](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/kernel/lib/ast.dart)。kernel binary可理解为kernel的二进制文件\(dill文件\)，二进制定义可见[这里](https://github.com/dart-lang/sdk/blob/master/pkg/kernel/binary.md)。
+而基于栈的指令就是目标地址是0个，操作都是基于栈执行的，形如：
+
+```text
+iconst_1  
+iconst_2  
+iadd  
+istore_0 
+```
+
+上面这段指令，会先将两个常量压栈，然后add操作会弹出栈上两个值，并执行加，再压回栈，store操作会将栈弹出一个值，并保存到变量区。
+
+大部分主流的VM\(包括JVM\)都是选择基于栈的指令集，基于栈的指令集将目标地址都隐含了，指令的密度比较高，可以用更少的空间放下更多的指令，在有限的空间环境下，是更可取的方式。除此之外，基于栈的指令集实现也比较简单，遇到较少寄存器的设备也有很好的效率。
+
+## 编译器前端
+
+编译器前端流水线分为普通模式和dbc下的bytecode模式：
+
+```text
+normal:
+dart source -> kernel -> global transformations(AOT) -> kernel binary -> object model
+​
+bytecode:
+dart source -> kernel -> kernel bytecode -> kernel binary -> object model
+```
+
+common front end：将dart源码通过编译器前端编译成kernel，如果需要，针对kernel进行多种代码分析，如果是bytecode模式，再将kernel编译成kernel bytecode，最后将kernel或kernel bytecode序列化出kernel binary。kernel和kernel bytecode是编译器前端的中间语言抽象，隐藏具体编译输入的细节，也可以看做是编译器前端的输出，编译器后端的输入。
+
+dartVM front end：dartVM加载kernel binary，读取二进制文件结构并载入对象模型。dartVM中有两层对象模型，外层就叫Library、Class，内层以Raw为命名规范，叫做RawLibrary、RawClass，非Raw层会引用Raw层。
+
+### kernel、kernel bytecode、kernel binary
+
+实际上，kernel会将dart程序构件\(component\)以自顶向下的方式组织，并添加必要的注解，kernel其实就是dart的AST，kernel本身是由[dart写的](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/kernel/lib/ast.dart)。kernel bytecode可理解为基于kernel设计的字节码指令集，详细定义可见[这里](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/vm/lib/bytecode/dbc.dart)和[这里](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/runtime/vm/constants_dbc.h)，kernel binary可理解为kernel/kernel bytecode的二进制文件\(dill文件\)，二进制定义可见[这里](https://github.com/dart-lang/sdk/blob/master/pkg/kernel/binary.md)。
 
 dart程序：
 
@@ -163,7 +215,7 @@ library from "file:///Users/mayufeng/Desktop/hello.dart" as int {
 
 ### 编译前端流水线
 
-编译前端流水线在[kernel\_front\_end](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/vm/lib/kernel_front_end.dart)中，流水线透过[kernel\_generator\_impl](https://github.com/dart-lang/sdk/blob/master/pkg/front_end/lib/src/kernel_generator_impl.dart)的`generateKernelInternal`调用[kernel\_target](https://github.com/dart-lang/sdk/blob/master/pkg/front_end/lib/src/fasta/kernel/kernel_target.dart)的`buildComponent`构建kernel程序构件`Component`，然后由transformer们去分析代码，再由[BinaryPrinter](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/kernel/lib/binary/ast_to_binary.dart)去序列化成kernel binary，最后写入目标文件：
+编译前端流水线在[kernel\_front\_end](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/vm/lib/kernel_front_end.dart)中，流水线透过[kernel\_generator\_impl](https://github.com/dart-lang/sdk/blob/master/pkg/front_end/lib/src/kernel_generator_impl.dart)的`generateKernelInternal`调用[kernel\_target](https://github.com/dart-lang/sdk/blob/master/pkg/front_end/lib/src/fasta/kernel/kernel_target.dart)的`buildComponent`构建kernel程序构件`Component`，如果是bytecode模式，会调用[gen\_bytecode](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/vm/lib/bytecode/gen_bytecode.dart)的`BytecodeGenerator`去遍历kernel，根据语法调用`BytecodeAssembler`生成bytecode，如果需要，交给transformer们去分析代码，再由[BinaryPrinter](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/kernel/lib/binary/ast_to_binary.dart)去序列化成kernel binary，最后写入目标文件：
 
 ```dart
 // Run kernel compiler tool with given [options] and [usage]
@@ -228,8 +280,50 @@ Future<Component> compileToKernel(Uri source, CompilerOptions options,
         enableConstantEvaluation,
         errorDetector);
   }
+  
+  if (genBytecode) {
+    await runWithFrontEndCompilerContext(source, options, component, () {
+      generateBytecode(component, options: bytecodeOptions);
+    });
+​
+    if (dropAST) {
+      component = createFreshComponentWithBytecode(component);
+    }
+  }
   ...
   return component;
+}
+​
+void generateBytecode(
+  Component component, {
+  bool dropAST: false,
+  bool emitSourcePositions: false,
+  bool omitAssertSourcePositions: false,
+  bool useFutureBytecodeFormat: false,
+  Map<String, String> environmentDefines,
+  ErrorReporter errorReporter,
+  List<Library> libraries,
+}) {
+  ...
+  final bytecodeGenerator = new BytecodeGenerator(
+      component,
+      coreTypes,
+      hierarchy,
+      typeEnvironment,
+      constantsBackend,
+      emitSourcePositions,
+      omitAssertSourcePositions,
+      useFutureBytecodeFormat,
+      errorReporter);
+  for (var library in libraries) {
+    bytecodeGenerator.visitLibrary(library);
+  }
+  if (dropAST) {
+    final astRemover = new DropAST(component);
+    for (var library in libraries) {
+      astRemover.visitLibrary(library);
+    }
+  }
 }
 ​
 Future _runGlobalTransformations(
@@ -266,7 +360,7 @@ Future _runGlobalTransformations(
 }
 ```
 
-### TFA\(Type Flow Analysis\)
+#### **TFA\(Type Flow Analysis\)**
 
 在多种代码分析中，TFA是比较关键的一种，只在AOT编译下有。TFA基于全局信息进行代码中的类型流动分析，通过类型判断出哪些类、哪些方法是不可达的，并且去虚拟化方法调用。在[transformer.dart](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/vm/lib/transformations/type_flow/transformer.dart)中：
 
@@ -299,9 +393,9 @@ Component transformComponent(
 }
 ```
 
-### 加载kernel binary
+#### **加载kernel binary**
 
-dartvm front end在编译前端中的角色就是加载kernel binary，读取二进制文件结构并载入对象模型。`Program`是kernel binary二进制文件结构的抽象，二进制文件头部的读取过程，即`Program`的创建过程：
+dartVM front end在编译前端中的角色就是加载kernel binary，读取二进制文件结构并载入对象模型。`Program`是kernel binary二进制文件结构的抽象，二进制文件头部的读取过程，即`Program`的创建过程：
 
 ```cpp
 std::unique_ptr<Program> Program::ReadFrom(Reader* reader, const char** error) {
@@ -387,7 +481,7 @@ std::unique_ptr<Program> Program::ReadFrom(Reader* reader, const char** error) {
 }
 ```
 
-`Program`被创建出来后，会交给`KernelLoader`去加载。加载会通过kernel helper们自顶向下的构建出程序构件，包括`Library`、`Class`、`Class`中的`Field`、`Class`中的`Constructor`、`Class`中的`Function`、常量等其他元素。
+`Program`被创建出来后，会交给`KernelLoader`去加载。加载会通过kernel translation helper们/bytecode helper们自顶向下的构建出程序构件，包括`Library`、`Class`、`Class`中的`Field`、`Class`中的`Constructor`、`Class`中的`Function`、常量等其他元素。
 
 加载`Program`主要过程如下，加载`Program`相关的`Library`，并返回`Program`的main Library：
 
@@ -397,7 +491,11 @@ RawObject* KernelLoader::LoadProgram(bool process_pending_classes) {
     if (FLAG_enable_interpreter || FLAG_use_bytecode_compiler) {
       libraries_loaded = bytecode_metadata_helper_.ReadLibraries();
     }
-​
+    ...
+    if (FLAG_enable_interpreter || FLAG_use_bytecode_compiler) {
+      libraries_loaded = bytecode_metadata_helper_.ReadLibraries();
+    }
+  
     if (!libraries_loaded) {
       // Note that `problemsAsJson` on Component is implicitly skipped.
       const intptr_t length = program_->library_count();
@@ -456,46 +554,46 @@ void KernelLoader::LoadClass(const Library& library,
                              const Class& toplevel_class,
                              intptr_t class_end,
                              Class* out_class) {
-	...
+  ...
   *out_class = LookupClass(library, class_helper.canonical_name_);
-	...
-
+  ...
+​
   // We do not register expression evaluation classes with the VM:
   // The expression evaluation functions should be GC-able as soon as
   // they are not reachable anymore and we never look them up by name.
   const bool register_class =
       library.raw() != expression_evaluation_library_.raw();
-
+​
   if (loading_native_wrappers_library_ || !register_class) {
     FinishClassLoading(*out_class, library, toplevel_class, class_offset,
                        class_index, &class_helper);
   }
 }
-
+​
 void KernelLoader::FinishClassLoading(const Class& klass,
                                       const Library& library,
                                       const Class& toplevel_class,
                                       intptr_t class_offset,
                                       const ClassIndex& class_index,
                                       ClassHelper* class_helper) {
-
+​
   fields_.Clear();
   functions_.Clear();
   if (!discard_fields) {
     class_helper->ReadUntilExcluding(ClassHelper::kFields);
     int field_count = helper_.ReadListLength();  // read list length.
     for (intptr_t i = 0; i < field_count; ++i) {
-			...
+      ...
       Field& field = Field::Handle(
           Z,
           Field::New(name, field_helper.IsStatic(), is_final,
                      field_helper.IsConst(), is_reflectable, script_class, type,
                      field_helper.position_, field_helper.end_position_));
-			...
+      ...
       fields_.Add(&field);
     }
     class_helper->SetJustRead(ClassHelper::kFields);
-
+​
   class_helper->ReadUntilExcluding(ClassHelper::kConstructors);
   int constructor_count = helper_.ReadListLength();  // read list length.
   for (intptr_t i = 0; i < constructor_count; ++i) {
@@ -513,10 +611,10 @@ void KernelLoader::FinishClassLoading(const Class& klass,
     functions_.Add(&function);
     ...
   }
-
+​
   // Everything up til the procedures are skipped implicitly, and class_helper
   // is no longer used.
-
+​
   intptr_t procedure_count = class_index.procedure_count();
   // Procedure offsets within a class index are whole program offsets and not
   // relative to the library of the class. Hence, we need a correction to get
@@ -529,19 +627,19 @@ void KernelLoader::FinishClassLoading(const Class& klass,
     LoadProcedure(library, klass, true, next_procedure_offset);
   }
 }
-
+​
 void KernelLoader::LoadProcedure(const Library& library,
                                  const Class& owner,
                                  bool in_class,
                                  intptr_t procedure_end) {
   intptr_t procedure_offset = helper_.ReaderOffset() - correction_offset_;
   ProcedureHelper procedure_helper(&helper_);
-	...
+  ...
   // We do not register expression evaluation libraries with the VM:
   // The expression evaluation functions should be GC-able as soon as
   // they are not reachable anymore and we never look them up by name.
   const bool register_function = !name.Equals(Symbols::DebugProcedureName());
-
+​
   Function& function = Function::ZoneHandle(
       Z, Function::New(name, kind,
                        !is_method,  // is_static
@@ -564,26 +662,25 @@ void KernelLoader::LoadProcedure(const Library& library,
 
 ## 编译器后端
 
-**dartvm虚拟机造了一套虚拟的基于栈的指令集，虚拟指的是这套指令集是面向对象抽象出来的，而不是真正的一套指令集，没有选择基于寄存器指令集的原因是基于栈的指令集生成的指令会更紧凑，程序体积会更小。**
+**虚拟机比较关键的一块就是指令集，dartVM虚拟机就有一套虚拟的基于栈的指令集，虚拟指的是这套指令集是面向对象抽象出来的，而不是真正的一套指令集。**
 
 编译器后端流水线分为优化或非优化两种：
 
 ```text
 unoptimized:
-
-CFG/blocks/IL -> stack based virtual machine -> machine code
-
+​
+CFG/blocks/IL -> machine code
+​
 optimized:
-
-CFG/blocks/IL -> stack based virtual machine -> SSA -> optimized piepeline pass -> machine code
-
+​
+CFG/blocks/IL -> optimized piepeline pass -> machine code
+​
 ```
 
-编译器将函数的函数体kernel转化为基于求值栈的虚拟指令集，具体数据结构为CFG\(Control Flow Graph\)，CFG由blocks组成，而blocks又是由IL\(intermediate language\)组成，IL即是指令，都会基于求值栈。如果不需要优化则直接将指令降级到机器码，需要优化要将IL改写成SSA\(Static Single Assignment\)形式，再经过优化流水线，最后降级到机器码。
+编译器将函数的函数体kernel转化为基于求值栈的虚拟指令集，具体数据结构为CFG\(Control Flow Graph\)，CFG由blocks组成，而blocks又是由IL\(intermediate language\)组成，IL即是指令，都会基于求值栈。如果不需要优化则直接将指令降级到机器码，需要优化要经过优化流水线，其中很关键的一步是把IL改写成SSA\(Static Single Assignment\)形式，最后降级到机器码。
 
 * CFG：程序流程控制的图表示，CFG是编译器对程序做处理/优化/分析的常用抽象。
 * IL：架构无关的指令抽象，方便对指令做优化，所有IL组成了虚拟指令集。
-* stack based virtual machine：[基于栈的虚拟机]([https://zh.wikipedia.org/wiki/%E5%A0%86%E7%96%8A%E7%B5%90%E6%A7%8B%E6%A9%9F%E5%99%A8]%28https://zh.wikipedia.org/wiki/%E5%A0%86%E7%96%8A%E7%B5%90%E6%A7%8B%E6%A9%9F%E5%99%A8%29)。
 * SSA：中间语言的一种形式，每个变量只可赋值一次。形成SSA形式，可使编译器进行更多深入的优化。
 
 ### CFG、Block、IL
@@ -598,12 +695,12 @@ class Instruction : public ZoneAllocated {
   ...
   // Visiting support.
   virtual void Accept(FlowGraphVisitor* visitor) = 0;
-
+​
   Instruction* previous() const { return previous_; }
   void set_previous(Instruction* instr) {
     previous_ = instr;
   }
-
+​
   Instruction* next() const { return next_; }
   void set_next(Instruction* instr) {
     // TODO(fschneider): Also add Throw and ReThrow to the list of instructions
@@ -612,21 +709,21 @@ class Instruction : public ZoneAllocated {
     // condition should be handled in the graph builder
     next_ = instr;
   }
-
+​
   // Link together two instruction.
   void LinkTo(Instruction* next) {
     this->set_next(next);
     next->set_previous(this);
   }
-
+​
   // Removed this instruction from the graph, after use lists have been
   // computed.  If the instruction is a definition with uses, those uses are
   // unaffected (so the instruction can be reinserted, e.g., hoisting).
   Instruction* RemoveFromGraph(bool return_previous = true);
   ...
   private:
-  	Instruction* previous_;
-  	Instruction* next_;
+    Instruction* previous_;
+    Instruction* next_;
 }
 ```
 
@@ -656,9 +753,9 @@ class BlockEntryInstr : public Instruction {
   bool DiscoverBlock(BlockEntryInstr* predecessor,
                      GrowableArray<BlockEntryInstr*>* preorder,
                      GrowableArray<intptr_t>* parent);
-	...
+  ...
  private:
-	...
+  ...
   intptr_t block_id_;
   Instruction* last_instruction_;
 };
@@ -674,7 +771,7 @@ class FlowGraph : public ZoneAllocated {
             GraphEntryInstr* graph_entry,
             intptr_t max_block_id,
             PrologueInfo prologue_info);
-
+​
   // Function properties.
   const ParsedFunction& parsed_function() const { return parsed_function_; }
   const Function& function() const { return parsed_function_.function(); }
@@ -687,7 +784,7 @@ class FlowGraph : public ZoneAllocated {
   const GrowableArray<BlockEntryInstr*>& reverse_postorder() const {
     return reverse_postorder_;
   }
-	...
+  ...
   void InsertBefore(Instruction* next,
                     Instruction* instr,
                     Environment* env,
@@ -706,9 +803,9 @@ class FlowGraph : public ZoneAllocated {
   void DiscoverBlocks();
   
   void MergeBlocks();
-	...
+  ...
   private:
-	...
+  ...
   GraphEntryInstr* graph_entry_;
   GrowableArray<BlockEntryInstr*> preorder_;
   GrowableArray<BlockEntryInstr*> postorder_;
@@ -742,16 +839,16 @@ RawCode* CompileParsedFunctionHelper::Compile(CompilationPipeline* pipeline) {
   CompilerPassState pass_state(thread(), flow_graph, &speculative_policy);
   pass_state.block_scheduler = &block_scheduler;
   pass_state.reorder_blocks = reorder_blocks;
-
+​
   if (optimized()) {
     pass_state.inline_id_to_function.Add(&function);
-
+​
     JitCallSpecializer call_specializer(flow_graph, &speculative_policy);
     pass_state.call_specializer = &call_specializer;
-
+​
     CompilerPass::RunPipeline(CompilerPass::kJIT, &pass_state);
   }
-	...
+  ...
     
   Assembler assembler(&object_pool_builder, use_far_branches);
   FlowGraphCompiler graph_compiler(
@@ -764,22 +861,33 @@ RawCode* CompileParsedFunctionHelper::Compile(CompilationPipeline* pipeline) {
   pipeline->FinalizeCompilation(flow_graph);
   
   *result = FinalizeCompilation(&assembler, &graph_compiler, flow_graph);
-	return result->raw();
+  return result->raw();
 }
 ```
 
-### 基于求值栈的指令
+#### **基于求值栈的指令**
 
-编译后端流水线中首先要做的就是构造CFG，构造过程通过编译器前端的kernel helper们解析函数体kernel，再通过kernel translation helper们将kernel转换成基于求值栈的虚拟指令集，并形成指令的有向图数据结构。
+编译后端流水线中首先要做的就是构造CFG，构造过程通过编译器前端的kernel translation helper们/bytecode helper们解析函数体kernel/kernel bytecode，再通过`FlowGraphBuilder`/`BytecodeFlowGraphBuilder`将kernel/kernel bytecode转换成基于求值栈的虚拟指令集，最后形成指令的有向图数据结构。
 
 编译后端流水线中，由`FlowGraphBuilder`构建`FlowGraph`，会走到`StreamingFlowGraphBuilder`的`BuildGraph`：
 
 ```cpp
 FlowGraph* StreamingFlowGraphBuilder::BuildGraph() {
   const Function& function = parsed_function()->function();
-	...
+  ...
+   if (function.is_declared_in_bytecode()) {
+    ...
+    bytecode_metadata_helper_.ParseBytecodeFunction(parsed_function());
+    ...
+    BytecodeFlowGraphBuilder bytecode_compiler(
+        flow_graph_builder_, parsed_function(),
+        &(flow_graph_builder_->ic_data_array_));
+    ...
+    return bytecode_compiler.BuildGraph();
+  }
+  ...
   ParseKernelASTFunction();
-	...
+  ...
   switch (function.kind()) {
     case RawFunction::kRegularFunction:
     case RawFunction::kGetterFunction:
@@ -821,12 +929,12 @@ FlowGraph* StreamingFlowGraphBuilder::BuildGraph() {
 }
 ```
 
-`StreamingFlowGraphBuilder`继承自编译前端的`KernelReaderHelper`，在`ParseKernelASTFunction`过程中复用kernel解析过程：
+普通模式下，`StreamingFlowGraphBuilder`继承了编译前端的`KernelReaderHelper`，在`ParseKernelASTFunction`过程中复用kernel解析过程：
 
 ```cpp
 void StreamingFlowGraphBuilder::ParseKernelASTFunction() {
   const Function& function = parsed_function()->function();
-	...
+  ...
   // Mark forwarding stubs.
   switch (function.kind()) {
     case RawFunction::kRegularFunction:
@@ -841,7 +949,7 @@ void StreamingFlowGraphBuilder::ParseKernelASTFunction() {
     default:
       break;
   }
-	...
+  ...
   switch (function.kind()) {
     case RawFunction::kRegularFunction:
     case RawFunction::kGetterFunction:
@@ -877,7 +985,7 @@ void StreamingFlowGraphBuilder::ParseKernelASTFunction() {
 }
 ```
 
-`BuildGraphOfFunction`会走到`BuildFunctionBody`再到`NativeFunctionBody`：
+普通模式下，在`FlowGraphBuilder`中，区分不同逻辑，将kernel转换成虚拟指令。比如，`BuildGraphOfFunction`会走到`BuildFunctionBody`再到`NativeFunctionBody`：
 
 ```cpp
 Fragment FlowGraphBuilder::NativeFunctionBody(const Function& function,
@@ -898,7 +1006,7 @@ Fragment FlowGraphBuilder::NativeFunctionBody(const Function& function,
       Return(TokenPosition::kNoSource, /* omit_result_type_check = */ false);
   return body;
 }
-
+​
 Fragment FlowGraphBuilder::LoadLocal(LocalVariable* variable) {
   if (variable->is_captured()) {
     Fragment instructions;
@@ -910,7 +1018,7 @@ Fragment FlowGraphBuilder::LoadLocal(LocalVariable* variable) {
     return BaseFlowGraphBuilder::LoadLocal(variable);
   }
 }
-
+​
 Fragment StreamingFlowGraphBuilder::PushArgument() {
   return flow_graph_builder_->PushArgument();
 }
@@ -934,7 +1042,7 @@ protected:
   Value* stack_;
 ...
 }
-
+​
 void BaseFlowGraphBuilder::Push(Definition* definition) {
   SetTempIndex(definition);
   Value::AddToList(new (Z) Value(definition), &stack_);
@@ -944,7 +1052,7 @@ Value* BaseFlowGraphBuilder::Pop() {
   Value* value = stack_;
   stack_ = value->next_use();
   if (stack_ != NULL) stack_->set_previous_use(NULL);
-
+​
   value->set_next_use(NULL);
   value->set_previous_use(NULL);
   value->definition()->ClearSSATempIndex();
@@ -966,7 +1074,73 @@ Fragment BaseFlowGraphBuilder::PushArgument() {
 }
 ```
 
-### 优化流水线
+bytecode模式下，通过编译前端的`BytecodeMetadataHelper`，复用kernel bytecode解析过程。在`BytecodeFlowGraphBuilder`中，统一通过`BuildInstruction`，将kernel bytecode转换成虚拟指令，分发到以Build + 指令名称的方法：
+
+```cpp
+void BytecodeFlowGraphBuilder::BuildInstruction(KernelBytecode::Opcode opcode) {
+  switch (opcode) {
+#define WIDE_CASE(name) case KernelBytecode::k##name##_Wide:
+#define WIDE_CASE_0(name)
+#define WIDE_CASE_A(name)
+#define WIDE_CASE_D(name) WIDE_CASE(name)
+#define WIDE_CASE_X(name) WIDE_CASE(name)
+#define WIDE_CASE_T(name) WIDE_CASE(name)
+#define WIDE_CASE_A_E(name) WIDE_CASE(name)
+#define WIDE_CASE_A_Y(name) WIDE_CASE(name)
+#define WIDE_CASE_D_F(name) WIDE_CASE(name)
+#define WIDE_CASE_A_B_C(name)
+​
+#define BUILD_BYTECODE_CASE(name, encoding, kind, op1, op2, op3)               \
+  BUILD_BYTECODE_CASE_##kind(name, encoding)
+​
+#define BUILD_BYTECODE_CASE_WIDE(name, encoding)
+#define BUILD_BYTECODE_CASE_RESV(name, encoding)
+#define BUILD_BYTECODE_CASE_ORDN(name, encoding)                               \
+  case KernelBytecode::k##name:                                                \
+    WIDE_CASE_##encoding(name) Build##name();                                  \
+    break;
+​
+    PUBLIC_KERNEL_BYTECODES_LIST(BUILD_BYTECODE_CASE)
+​
+#undef WIDE_CASE
+#undef WIDE_CASE_0
+#undef WIDE_CASE_A
+#undef WIDE_CASE_D
+#undef WIDE_CASE_X
+#undef WIDE_CASE_T
+#undef WIDE_CASE_A_E
+#undef WIDE_CASE_A_Y
+#undef WIDE_CASE_D_F
+#undef WIDE_CASE_A_B_C
+#undef BUILD_BYTECODE_CASE
+#undef BUILD_BYTECODE_CASE_WIDE
+#undef BUILD_BYTECODE_CASE_RESV
+#undef BUILD_BYTECODE_CASE_ORDN
+​
+    default:
+      FATAL1("Unsupported bytecode instruction %s\n",
+             KernelBytecode::NameOf(opcode));
+  }
+}
+```
+
+比如，`BuildLoadFieldTOS`方法：
+
+```cpp
+void BytecodeFlowGraphBuilder::BuildLoadFieldTOS() {
+  ...
+  const Field& field = Field::Cast(ConstantAt(cp_index, 1).value());
+  ...
+  if (field.Owner() == isolate()->object_store()->closure_class()) {
+    // Loads from _Closure fields are lower-level.
+    code_ += flow_graph_builder_->LoadNativeField(ClosureSlotByField(field));
+  } else {
+    code_ += flow_graph_builder_->LoadField(field);
+  }
+}
+```
+
+#### **优化流水线**
 
 优化流水线中包括多项优化，在编译后端流水线中由`CompilerPass`作为入口：
 
@@ -1047,7 +1221,7 @@ COMPILER_PASS(ComputeSSA, {
 });
 ```
 
-### 机器码降级
+#### **机器码降级**
 
 机器码降级会先将基于求值栈的虚拟指令翻译成目标架构的指令集，再翻译成机器码。`Assembler`抽象了架构的指令集，不同架构有不同实现。`FlowGraphCompiler`会以Block为单位访问程序，执行翻译。
 
@@ -1064,33 +1238,33 @@ class Assembler : public AssemblerBase {
   void call(const Address& address) { EmitUnaryL(address, 0xFF, 2); }
   void call(Label* label);
   void call(const ExternalLabel* label);
-
+​
   void pushq(Register reg);
   void pushq(const Address& address) { EmitUnaryL(address, 0xFF, 6); }
   void pushq(const Immediate& imm);
   void PushImmediate(const Immediate& imm);
-
+​
   void popq(Register reg);
   void popq(const Address& address) { EmitUnaryL(address, 0x8F, 0); }
   ...
 }
-
+​
 void Assembler::EmitUnaryL(Register reg, int opcode, int modrm_code) {
   AssemblerBuffer::EnsureCapacity ensured(&buffer_);
   EmitRegisterREX(reg, REX_NONE);
   EmitUint8(opcode);
   EmitOperand(modrm_code, Operand(reg));
 }
-
+​
 inline void Assembler::EmitRegisterREX(Register reg, uint8_t rex, bool force) {
   rex |= (reg > 7 ? REX_B : REX_NONE);
   if (rex != REX_NONE || force) EmitUint8(REX_PREFIX | rex);
 }
-
+​
 inline void Assembler::EmitUint8(uint8_t value) {
   buffer_.Emit<uint8_t>(value);
 }
-
+​
 void Assembler::EmitOperand(int rm, const Operand& operand) {
   const intptr_t length = operand.length_;
   // Emit the ModRM byte updated with the given RM value.
@@ -1122,19 +1296,19 @@ void PushArgumentInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
     }
   }
 }
-
+​
 void ClosureCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   // Load arguments descriptor in R4.
   const intptr_t argument_count = ArgumentCount();  // Includes type args.
   const Array& arguments_descriptor =
       Array::ZoneHandle(Z, GetArgumentsDescriptor());
   compiler->assembler()->LoadObject(R4, arguments_descriptor);
-
+​
   // R4: Arguments descriptor.
   // R0: Function.
   compiler->assembler()->LoadFieldFromOffset(CODE_REG, R0, Function::code_offset());
   compiler->assembler()->LoadFieldFromOffset(R2, R0, Function::entry_point_offset());
-
+​
   // R2: instructions.
   // R5: Smi 0 (no IC data; the lazy-compile stub expects a GC-safe value).
   compiler->assembler()->LoadImmediate(R5, 0);
@@ -1157,22 +1331,22 @@ void ClosureCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
 //   R4: arguments descriptor array.
 void FlowGraphCompiler::CompileGraph() {
   InitCompiler();
-	...
+  ...
   VisitBlocks();
-	...
+  ...
 }
-
+​
 void FlowGraphCompiler::VisitBlocks() {
-	...
+  ...
   for (intptr_t i = 0; i < block_order().length(); ++i) {
     // Compile the block entry.
     BlockEntryInstr* entry = block_order()[i];
     assembler()->Comment("B%" Pd "", entry->block_id());
     set_current_block(entry);
-		...
+    ...
     entry->EmitNativeCode(this);
     ...
-
+​
     // Compile all successors until an exit, branch, or a block entry.
     for (ForwardInstructionIterator it(entry); !it.Done(); it.Advance()) {
       Instruction* instr = it.Current();
@@ -1193,12 +1367,12 @@ void FlowGraphCompiler::VisitBlocks() {
 
 ## Snapshot
 
-snapshot顾名思义，是isolate堆上内存存储的对象图的快照，可被用来快速还原isolate及其内部状态。snapshot实体就是isolate中的对象存储和一些控制命令。snapshot是在dart早期设计出来的东西，目的是为了：
+snapshot顾名思义，是isolate堆上内存存储的对象图的快照，可以快速还原出一个一模一样的isolate。snapshot实体就是isolate中的对象存储和相关的指令。snapshot主要用途：
 
 * 相比于还要进行编译器前端流水线解析出vm内部数据结构，不如直接载入这些内部数据结构，这样能大幅度提升启动时间。
 * 在isolate之间传输对象。
 
-而后来随着dart的发展，dart加入了JIT和AOT，snapshot也被改造到有更多的能力。在还没有AOT时期，snapshot是不带机器码的，后来为了支持AOT，snapshot可直接包含机器码。发展到现在，在应用场景，dart衍生出了更多种snapshot，snapshot种类为：
+在应用场景，dart衍生出了多种snapshot，snapshot种类为：
 
 ```cpp
 enum SnapshotKind {
@@ -1219,7 +1393,7 @@ enum SnapshotKind {
 * Assembly
 * Elf
 
-snapshot的主体是isolate的对象存储，对象存储会被序列化到RO可读数据段，三种格式是完全相同的。不同的是会被序列化到Text段的命令格式，Blob是指令格式的，Assembly是汇编格式的，Elf也是指令格式的。
+snapshot的主体是isolate的对象存储，对象存储会被序列化到RO可读数据段，三种格式是完全相同的。不同的是会被序列化到Text段的命令格式，Blob是二进制格式的，Assembly是汇编格式的，Elf也是二进制格式的。
 
 ### RO
 
@@ -1238,29 +1412,29 @@ void FullSnapshotWriter::WriteIsolateSnapshot(intptr_t num_base_objects) {
   serializer.WriteIsolateSnapshot(num_base_objects, object_store);
   ...
 }
-
+​
 void Serializer::WriteIsolateSnapshot(intptr_t num_base_objects,
                                       ObjectStore* object_store) {
-	...
+  ...
   // Push roots.
   RawObject** from = object_store->from();
   RawObject** to = object_store->to_snapshot(kind_);
   for (RawObject** p = from; p <= to; p++) {
     Push(*p);
   }
-
+​
   Serialize();
-	...
+  ...
 }
-
+​
 void ImageWriter::WriteROData(WriteStream* stream) {
-	...
+  ...
   for (intptr_t i = 0; i < objects_.length(); i++) {
     const Object& obj = *objects_[i].obj_;
     
     uword start = reinterpret_cast<uword>(obj.raw()) - kHeapObjectTag;
     uword end = start + obj.raw()->HeapSize();
-		...
+    ...
     start += sizeof(uword);
     for (uword* cursor = reinterpret_cast<uword*>(start);
          cursor < reinterpret_cast<uword*>(end); cursor++) {
@@ -1268,16 +1442,16 @@ void ImageWriter::WriteROData(WriteStream* stream) {
     }
   }
 }
-
+​
 ```
 
 ### Blob
 
-Blob格式会由`BlobImageWriter`导出Text段的指令，主要过程如下：
+Blob格式会由`BlobImageWriter`导出指令的二进制到Text段，主要过程如下：
 
 ```cpp
 void BlobImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
-	...
+  ...
   // This header provides the gap to make the instructions snapshot look like a
   // HeapPage.
   intptr_t instructions_length = next_text_offset_;
@@ -1286,18 +1460,18 @@ void BlobImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
   for (intptr_t i = 1; i < header_words; i++) {
     instructions_blob_stream_.WriteWord(0);
   }
-
+​
   for (intptr_t i = 0; i < instructions_.length(); i++) {
     const Instructions& insns = *instructions_[i].insns_;
-
+​
     uword beginning = reinterpret_cast<uword>(insns.raw_ptr());
     uword entry = beginning + Instructions::HeaderSize();
     uword payload_size = insns.Size();
     payload_size = Utils::RoundUp(payload_size, OS::PreferredCodeAlignment());
     uword end = entry + payload_size;
-		
+    
     ...
-
+​
 #if defined(IS_SIMARM_X64)
     instructions_blob_stream_.WriteBytes(
         reinterpret_cast<const void*>(insns.PayloadStart()), insns.Size());
@@ -1305,14 +1479,14 @@ void BlobImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
     beginning += sizeof(uword);
     text_offset += WriteByteSequence(beginning, end);
 #endif  // defined(IS_SIMARM_X64)
-		...
+    ...
   }
 }
 ```
 
 ### Assembly
 
-Assembly格式会由`AssemblyImageWriter`导出Text段的汇编，主要过程如下：
+Assembly格式会由`AssemblyImageWriter`导出指令的汇编到Text段，主要过程如下：
 
 ```cpp
 void AssemblyImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
@@ -1320,7 +1494,7 @@ void AssemblyImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
       vm ? "_kDartVmSnapshotInstructions" : "_kDartIsolateSnapshotInstructions";
   assembly_stream_.Print(".text\n");
   assembly_stream_.Print(".globl %s\n", instructions_symbol);
-
+​
   // Start snapshot at page boundary.
   assembly_stream_.Print(".balign %" Pd ", 0\n", VirtualMemory::PageSize());
   assembly_stream_.Print("%s:\n", instructions_symbol);
@@ -1329,7 +1503,7 @@ void AssemblyImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
   // CFI = Call frame information
   // CFA = Canonical frame address
   assembly_stream_.Print(".cfi_startproc\n");
-
+​
 #if defined(TARGET_ARCH_X64)
   assembly_stream_.Print(".cfi_def_cfa rbp, 0\n");  // CFA is fp+0
   assembly_stream_.Print(".cfi_offset rbp, 0\n");   // saved fp is *(CFA+0)
@@ -1343,7 +1517,7 @@ void AssemblyImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
   // DW_OP_plus_uconst          0x23
   // uleb128 addend               16
   assembly_stream_.Print(".cfi_escape 0x10, 31, 2, 0x23, 16\n");
-
+​
 #elif defined(TARGET_ARCH_ARM64)
   COMPILE_ASSERT(FP == R29);
   COMPILE_ASSERT(LR == R30);
@@ -1359,7 +1533,7 @@ void AssemblyImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
   // DW_OP_plus_uconst          0x23
   // uleb128 addend               16
   assembly_stream_.Print(".cfi_escape 0x10, 31, 2, 0x23, 16\n");
-
+​
 #elif defined(TARGET_ARCH_ARM)
 #if defined(TARGET_OS_MACOS) || defined(TARGET_OS_MACOS_IOS)
   COMPILE_ASSERT(FP == R7);
@@ -1380,7 +1554,7 @@ void AssemblyImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
   // DW_OP_plus_uconst          0x23
   // uleb128 addend                8
   assembly_stream_.Print(".cfi_escape 0x10, 13, 2, 0x23, 8\n");
-
+​
 // libunwind on ARM may use .ARM.exidx instead of .debug_frame
 #if !defined(TARGET_OS_MACOS) && !defined(TARGET_OS_MACOS_IOS)
   COMPILE_ASSERT(FP == R11);
@@ -1388,7 +1562,7 @@ void AssemblyImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
   assembly_stream_.Print(".save {r11, lr}\n");
   assembly_stream_.Print(".setfp r11, sp, #0\n");
 #endif
-
+​
 #endif
   ...
     
@@ -1408,30 +1582,30 @@ void AssemblyImageWriter::WriteText(WriteStream* clustered_stream, bool vm) {
 }
 ```
 
-## JIT和AOT
+## JIT、AOT、Interpret
 
-dart支持JIT和AOT，本质上是对应解释型和编译型，也就是说dart是即支持解释型又支持编译型的语言。不仅如此，dart还为JIT和AOT引入了snapshot优化，这使得dart在编译这块较为复杂。总的来看，dart可以直接执行kernel binary，也可以直接执行snapshot，JIT即可以加载kernel也可以基于snapshot，而AOT完全是基于snapshot。JIT snapshot就是Blob格式，而AOT snapshot支持所有三种格式。树状关系图：
+dart为JIT和AOT引入了snapshot优化，而Interpret比较独立，这使得dart在编译这块较为复杂。总的来看，dart可以直接执行kernel binary，包含kernel或者kernel bytecode都可以，也可以直接执行snapshot，JIT即可以加载kernel也可以基于snapshot，而AOT完全是基于snapshot。树状关系图：
 
-* JIT
-  * kernel binary
-  * jit snapshot
-    * blob
-* AOT
-  * aot snapshot
-    * blob
-    * assembly
-    * elf
+* JIT：编译前端处理好后，函数体通过stub交给编译后端处理。
+  * kernel binary\(kernel\)
+  * JIT snapshot
+* AOT：编译前端、编译后端一次性处理。
+  * AOT snapshot
+* Interpret：编译前端处理好后，解释器解释字节码。
+  * kernel binary\(kernel bytecode\)
+
+![](../.gitbook/assets/dart_compile.png)
 
 ### JIT编译流水线
 
-JIT编译主要流程：由编译器前端输出kernel binary，dartvm加载kernel binary，处理好后导出snapshot，运行时通过Stub交给编译后端处理。加载kernel binary和导出snapshot，主要过程在[gen\_snapshot](https://github.com/dart-lang/sdk/blob/master/runtime/bin/gen_snapshot.cc)中，gen\_snapshot会通`Dart_CreateIsolateFromKernel`或`Dart_CreateIsolate`dartvm api去初始化isolate，在isolate初始化时，会初始化Object\(`Object::Init`\)，这时会加载kernel binary。随后针对不同格式的snapshot调用不同的dartvm api，过程如下：
+JIT编译主要流程：由编译器前端输出kernel binary，dartvm加载kernel binary，处理好后导出snapshot，运行时通过stub交给编译后端处理。加载kernel binary和导出snapshot，主要过程在[gen\_snapshot](https://github.com/dart-lang/sdk/blob/master/runtime/bin/gen_snapshot.cc)中，gen\_snapshot会通`Dart_CreateIsolateFromKernel`或`Dart_CreateIsolate`dartvm api去初始化isolate，在isolate初始化时，会初始化Object\(`Object::Init`\)，这时会加载kernel binary。随后针对不同格式的snapshot调用不同的dartvm api，过程如下：
 
 ```cpp
 static int CreateIsolateAndSnapshot(const CommandLineOptions& inputs) {
   uint8_t* kernel_buffer = NULL;
   intptr_t kernel_buffer_size = NULL;
   ReadFile(inputs.GetArgument(0), &kernel_buffer, &kernel_buffer_size);
-	...
+  ...
   if (isolate_snapshot_data == NULL) {
     // We need to capture the vmservice library in the core snapshot, so load it
     // in the main isolate as well.
@@ -1444,7 +1618,7 @@ static int CreateIsolateAndSnapshot(const CommandLineOptions& inputs) {
                                  isolate_snapshot_instructions, NULL, NULL,
                                  &isolate_flags, isolate_data, &error);
   }
-
+​
   // The root library has to be set to generate AOT snapshots, and sometimes we
   // set one for the core snapshot too.
   // If the input dill file has a root library, then Dart_LoadScript will
@@ -1462,11 +1636,11 @@ static int CreateIsolateAndSnapshot(const CommandLineOptions& inputs) {
   result = Dart_SetRootLibrary(
       Dart_LoadLibraryFromKernel(kernel_buffer, kernel_buffer_size));
   CHECK_RESULT(result);
-
+​
   MaybeLoadExtraInputs(inputs);
-
+​
   MaybeLoadCode();
-
+​
   switch (snapshot_kind) {
     case kCore:
       CreateAndWriteCoreSnapshot();
@@ -1497,7 +1671,7 @@ static int CreateIsolateAndSnapshot(const CommandLineOptions& inputs) {
   }
   ...
 }
-
+​
 static void CreateAndWriteCoreJITSnapshot() {
   ...
   // First create a snapshot.
@@ -1509,14 +1683,14 @@ static void CreateAndWriteCoreJITSnapshot() {
       &isolate_snapshot_instructions_size);
   ...
 }
-
+​
 static void CreateAndWriteAppJITSnapshot() {
-	...
+  ...
   result = Dart_CreateAppJITSnapshotAsBlobs(
       &isolate_snapshot_data_buffer, &isolate_snapshot_data_size,
       &isolate_snapshot_instructions_buffer,
       &isolate_snapshot_instructions_size, reused_instructions);
-	...
+  ...
 }
 ```
 
@@ -1524,7 +1698,7 @@ static void CreateAndWriteAppJITSnapshot() {
 
 AOT编译主要流程：由编译器前端输出kernel binary，输出过程中会针对kernel进行TFA\(Type Flow Analysis\)，dartvm加载kernel binary，再交给编译器后端处理，处理好后导出snapshot。[脚本如下](https://github.com/dart-lang/sdk/blob/cb6127570889bed147cbe6292cb2c0ba35271d58/pkg/vm/tool/precompiler2)：
 
-```text
+```bash
 if [ $BUILD_ELF -eq 1 ]; then
   GEN_SNAPSHOT_OPTION="--snapshot-kind=app-aot-assembly"
   GEN_SNAPSHOT_FILENAME="--assembly=${SNAPSHOT_FILE}.S"
@@ -1532,7 +1706,7 @@ else
   GEN_SNAPSHOT_OPTION="--snapshot-kind=app-aot-blobs"
   GEN_SNAPSHOT_FILENAME="--blobs_container_filename=${SNAPSHOT_FILE}"
 fi
-
+​
 # Step 1: Generate kernel binary from the input Dart source.
 "$BIN_DIR"/dart                                                                \
      "${SDK_DIR}/pkg/vm/bin/gen_kernel.dart"                                   \
@@ -1542,14 +1716,14 @@ fi
      $PACKAGES                                                                 \
      -o "$SNAPSHOT_FILE.dill"                                                  \
      "$SOURCE_FILE"
-
+​
 # Step 2: Generate snapshot from the kernel binary.
 "$BIN_DIR"/gen_snapshot                                                        \
      "$GEN_SNAPSHOT_OPTION"                                                    \
      "$GEN_SNAPSHOT_FILENAME"                                                  \
      "${OPTIONS[@]}"                                                           \
      "$SNAPSHOT_FILE.dill"
-
+​
 # Step 3: Assemble the assembly file into an ELF object.
 if [ $BUILD_ELF -eq 1 ]; then
     gcc -shared -o "$SNAPSHOT_FILE" "${SNAPSHOT_FILE}.S"
@@ -1561,13 +1735,13 @@ fi
 ```cpp
 static void CreateAndWritePrecompiledSnapshot() {
   Dart_Handle result;
-
+​
   // Precompile with specified embedder entry points
   result = Dart_Precompile();
   
   // Create a precompiled snapshot.
   if (snapshot_kind == kAppAOTAssembly) {
-  	...
+    ...
     result = Dart_CreateAppAOTSnapshotAsAssembly(StreamingWriteCallback, file);
   } else if (snapshot_kind == kAppAOTElf) {
     ...
@@ -1575,7 +1749,7 @@ static void CreateAndWritePrecompiledSnapshot() {
         Dart_CreateAppAOTSnapshotAsElf(StreamingWriteCallback, file, strip);
     CHECK_RESULT(result);
   } else if (snapshot_kind == kAppAOTBlobs) {
-  	...
+    ...
     result = Dart_CreateAppAOTSnapshotAsBlobs(
       &vm_snapshot_data_buffer, &vm_snapshot_data_size,
       &vm_snapshot_instructions_buffer, &vm_snapshot_instructions_size,
@@ -1586,11 +1760,139 @@ static void CreateAndWritePrecompiledSnapshot() {
 }
 ```
 
+### Interpret
+
+dart加入bytecode模式就是为了支持Interpret，这也就是说Interpret完全是基于bytecode模式来做的。Interpret解释主要流程：由编译器前端输出包含kernel bytecode的kernel binary，dartvm加载kernel binary，kernel bytecode不交给编译后端，而交给Interpreter处理。
+
+Interpreter会维护栈帧，根据函数的bytecode指令操作数dispatch到相应代码段处理：
+
+```cpp
+RawObject* Interpreter::Call(RawFunction* function,
+                             RawArray* argdesc,
+                             intptr_t argc,
+                             RawObject* const* argv,
+                             Thread* thread) {
+  // Interpreter state (see constants_kbc.h for high-level overview).
+  const KBCInstr* pc;  // Program Counter: points to the next op to execute.
+  RawObject** FP;      // Frame Pointer.
+  RawObject** SP;      // Stack Pointer.
+​
+  uint32_t op;  // Currently executing op.
+  // Setup entry frame:
+  //
+  //                        ^
+  //                        |  previous Dart frames
+  //                        |
+  //       | ........... | -+
+  // fp_ > | exit fp_    |     saved top_exit_frame_info
+  //       | argdesc_    |     saved argdesc_ (for reentering interpreter)
+  //       | pp_         |     saved pp_ (for reentering interpreter)
+  //       | arg 0       | -+
+  //       | arg 1       |  |
+  //         ...            |
+  //                         > incoming arguments
+  //                        |
+  //       | arg argc-1  | -+
+  //       | function    | -+
+  //       | code        |  |
+  //       | caller PC   | ---> special fake PC marking an entry frame
+  //  SP > | fp_         |  |
+  //  FP > | ........... |   > normal Dart frame (see stack_frame_kbc.h)
+  //                        |
+  //                        v
+  //
+  // A negative argc indicates reverse memory order of arguments.
+  ...
+#ifdef DART_HAS_COMPUTED_GOTO
+  static const void* dispatch[] = {
+#define TARGET(name, fmt, kind, fmta, fmtb, fmtc) &&bc##name,
+      KERNEL_BYTECODES_LIST(TARGET)
+#undef TARGET
+  };
+  DISPATCH();  // Enter the dispatch loop.
+#else
+  DISPATCH();  // Enter the dispatch loop.
+SwitchDispatch:
+  switch (op & 0xFF) {
+#define TARGET(name, fmt, kind, fmta, fmtb, fmtc)                              \
+  case KernelBytecode::k##name:                                                \
+    goto bc##name;
+    KERNEL_BYTECODES_LIST(TARGET)
+#undef TARGET
+    default:
+      FATAL1("Undefined opcode: %d\n", op);
+  }
+#endif
+​
+  // KernelBytecode handlers (see constants_kbc.h for bytecode descriptions).
+  {
+    BYTECODE(Entry, D);
+    const intptr_t num_locals = rD;
+​
+    // Initialize locals with null & set SP.
+    for (intptr_t i = 0; i < num_locals; i++) {
+      FP[i] = null_value;
+    }
+    SP = FP + num_locals - 1;
+​
+    DISPATCH();
+  }
+​
+  {
+    BYTECODE(EntryFixed, A_E);
+    const intptr_t num_fixed_params = rA;
+    const intptr_t num_locals = rE;
+​
+    const intptr_t arg_count = InterpreterHelpers::ArgDescArgCount(argdesc_);
+    const intptr_t pos_count = InterpreterHelpers::ArgDescPosCount(argdesc_);
+    if ((arg_count != num_fixed_params) || (pos_count != num_fixed_params)) {
+      goto NoSuchMethodFromPrologue;
+    }
+​
+    // Initialize locals with null & set SP.
+    for (intptr_t i = 0; i < num_locals; i++) {
+      FP[i] = null_value;
+    }
+    SP = FP + num_locals - 1;
+​
+    DISPATCH();
+  }
+​
+  {
+    BYTECODE(EntryOptional, A_B_C);
+    if (CopyParameters(thread, &pc, &FP, &SP, rA, rB, rC)) {
+      DISPATCH();
+    } else {
+      goto NoSuchMethodFromPrologue;
+    }
+  }
+​
+  {
+    BYTECODE(Frame, D);
+    // Initialize locals with null and increment SP.
+    const intptr_t num_locals = rD;
+    for (intptr_t i = 1; i <= num_locals; i++) {
+      SP[i] = null_value;
+    }
+    SP += num_locals;
+​
+    DISPATCH();
+  }
+​
+  {
+    BYTECODE(SetFrame, A);
+    SP = FP + rA - 1;
+    DISPATCH();
+  }
+  ...
+}
+```
+
 ## 引用
 
 [https://mrale.ph/dartvm/](https://mrale.ph/dartvm/)
 
-[https://thosakwe.com/aot-compilation-and-other-dart-hackery/](https://thosakwe.com/aot-compilation-and-other-dart-hackery/)
+[http://dartdoc.takyam.com/articles/why-not-bytecode/](http://dartdoc.takyam.com/articles/why-not-bytecode/)
 
 [https://rednaxelafx.iteye.com/blog/492667](https://rednaxelafx.iteye.com/blog/492667)
 
