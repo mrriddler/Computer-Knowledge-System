@@ -29,7 +29,9 @@ JIT、AOT、Interpret较为复杂，下文从JIT、AOT、Interpret依赖的编�
 
 ## 虚拟机的选择
 
-技术是关乎trade-off的，做虚拟机也一样，需要做选择：
+**虚拟机就是对计算机本身的抽象，计算机可以接受机器码然后执行，虚拟机在机器码抽象一层，就是可以接受自定义的指令集。**
+
+技术是关乎trade-off的，虚拟机也一样，需要做选择：
 
 * bytecode vm还是language vm：是基于bytecode的虚拟机，还是针对某个特定语言的虚拟机。
 * base on stack还是base on register：虚拟机指令集是基于栈还是寄存器。
@@ -44,8 +46,8 @@ bytecode vm的优缺点：
 language vm的优缺点：
 
 * 针对特定语言设计，无法支持其他语言。
-* 针对一种语言设计，vm可以做到更好的性能。
-* 针对某种语言设计，vm实现可假设语言特性，简单一点。
+* 针对特定语言设计，vm可以做到更好的性能。
+* 针对特定语言设计，vm实现可假设语言特性，简单一点。
 
 这其实就是通用和特化的选择，dart在立项时，选择了language vm，但随着dart应用场景的丰富，也提供了基于language vm的bytecode模式，bytecode模式的实现是在基于language vm的前端流水线和后端流水线中，添加了个相关阶段。
 
@@ -662,7 +664,7 @@ void KernelLoader::LoadProcedure(const Library& library,
 
 ## 编译器后端
 
-**虚拟机比较关键的一块就是指令集，dartVM虚拟机就有一套虚拟的基于栈的指令集，虚拟指的是这套指令集是面向对象抽象出来的，而不是真正的一套指令集。**
+**虚拟机比较关键的一块就是指令集，dartVM虚拟机内部就有一套基于栈的指令集，这套指令集不像字节码指令集是可以直接输出的，这套指令集是面向对象抽象出来的。**
 
 编译器后端流水线分为优化或非优化两种：
 
@@ -677,10 +679,10 @@ CFG/blocks/IL -> optimized piepeline pass -> machine code
 ​
 ```
 
-编译器将函数的函数体kernel转化为基于求值栈的虚拟指令集，具体数据结构为CFG\(Control Flow Graph\)，CFG由blocks组成，而blocks又是由IL\(intermediate language\)组成，IL即是指令，都会基于求值栈。如果不需要优化则直接将指令降级到机器码，需要优化要经过优化流水线，其中很关键的一步是把IL改写成SSA\(Static Single Assignment\)形式，最后降级到机器码。
+编译器将函数的函数体kernel转化为基于求值栈的指令集，具体数据结构为CFG\(Control Flow Graph\)，CFG由blocks组成，而blocks又是由IL\(intermediate language\)组成，IL即是指令，都会基于求值栈。如果不需要优化则直接将指令降级到机器码，需要优化要经过优化流水线，其中很关键的一步是把IL改写成SSA\(Static Single Assignment\)形式，最后降级到机器码。
 
 * CFG：程序流程控制的图表示，CFG是编译器对程序做处理/优化/分析的常用抽象。
-* IL：架构无关的指令抽象，方便对指令做优化，所有IL组成了虚拟指令集。
+* IL：架构无关的指令抽象，方便对指令做优化，所有IL组成了指令集。
 * SSA：中间语言的一种形式，每个变量只可赋值一次。形成SSA形式，可使编译器进行更多深入的优化。
 
 ### CFG、Block、IL
@@ -867,7 +869,7 @@ RawCode* CompileParsedFunctionHelper::Compile(CompilationPipeline* pipeline) {
 
 #### **基于求值栈的指令**
 
-编译后端流水线中首先要做的就是构造CFG，构造过程通过编译器前端的kernel translation helper们/bytecode helper们解析函数体kernel/kernel bytecode，再通过`FlowGraphBuilder`/`BytecodeFlowGraphBuilder`将kernel/kernel bytecode转换成基于求值栈的虚拟指令集，最后形成指令的有向图数据结构。
+编译后端流水线中首先要做的就是构造CFG，构造过程通过编译器前端的kernel translation helper们/bytecode helper们解析函数体kernel/kernel bytecode，再通过`FlowGraphBuilder`/`BytecodeFlowGraphBuilder`将kernel/kernel bytecode转换成基于求值栈的指令集，最后形成指令的有向图数据结构。
 
 编译后端流水线中，由`FlowGraphBuilder`构建`FlowGraph`，会走到`StreamingFlowGraphBuilder`的`BuildGraph`：
 
